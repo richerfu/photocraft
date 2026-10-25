@@ -22,6 +22,7 @@ workspace = true
 [dependencies]
 photocraft-doc = { workspace = true }
 photocraft-color = { workspace = true }
+photocraft-cms = { workspace = true }
 photocraft-raster = { workspace = true }
 photocraft-geom = { workspace = true }
 photocraft-compose = { workspace = true }
@@ -36,14 +37,14 @@ eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# Reads the saved window layout (eframe persistence) to drop values that would abort startup.
+ron = "0.12"
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_env = "ohos")))'.dependencies]
 photocraft-tablet = { workspace = true }
 rfd = { workspace = true }
 arboard = { version = "3.6", features = ["wayland-data-control"] }
 open = "5"
-# Reads the saved window layout (eframe persistence) to drop values that would abort startup.
-ron = "0.12"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Safe CoreGraphics bindings, compatible with the existing macOS 11 deployment target.
@@ -100,4 +101,4 @@ winresource = "0.1"
 [target.'cfg(target_env = "ohos")'.dependencies]
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "extended-plugins"] }
 ohos-hilog-binding = { version = "0.2.3", features = ["log"] }
-openharmony-ability = { git = "https://github.com/harmony-contrib/openharmony-ability.git", rev = "385ce749121b56ea33226f8542e3f39afd6e5ed6" }
+openharmony-ability = { git = "https://github.com/harmony-contrib/openharmony-ability.git", rev = "e2c844358ce2406a8e6800e9fbc88ed1bb47d279" }

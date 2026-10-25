@@ -93,7 +93,7 @@ Files copied into `corpus/` by hand (tiff, exr, raw) must be MIT, BSD or CC0.
 ## OpenHarmony dependencies
 
 The OpenHarmony build integrates the `feat-openharmony` branches of `egui` (`0.36.2`)
-and `winit` (`0.30.13`) together with `openharmony-ability` (`385ce749`).
+and `winit` (`0.30.13`) together with `openharmony-ability` (`e2c84435`).
 
 | Dependency | Title | Author | Source | License |
 | --- | --- | --- | --- | --- |

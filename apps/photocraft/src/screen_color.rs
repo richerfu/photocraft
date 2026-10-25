@@ -2,8 +2,9 @@
 //! disk, transmitted or retained after a pick. Wayland delegates to its permission portal.
 use photocraft_ui_egui::screen_picker::{Capture, MAX_PIXELS, Pending, ScreenImage, Service};
 
+#[cfg_attr(target_env = "ohos", allow(unused_variables))]
 pub fn service(cc: &eframe::CreationContext<'_>, wayland: bool) -> Option<Service> {
-    if !cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows")) {
+    if !cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows", target_env = "ohos")) {
         return None;
     }
     let window = cc.winit_window()?.clone();
@@ -19,11 +20,19 @@ pub fn service(cc: &eframe::CreationContext<'_>, wayland: bool) -> Option<Servic
                 Placement { index, x: p.x, y: p.y, width: size.width, height: size.height }
             })
             .collect();
+        #[cfg(target_env = "ohos")]
+        let ohos_window_id = {
+            use winit::platform::ohos::WindowExtOpenHarmony as _;
+            window.real_window_id()
+        };
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop = cancelled.clone();
         let scale = ctx.native_pixels_per_point().unwrap_or(1.0);
         let wake = ctx.clone();
         if let Err(e) = std::thread::Builder::new().name("screen-color-picker".into()).spawn(move || {
+            #[cfg(target_env = "ohos")]
+            let result = capture_ohos(ohos_window_id, scale, &stop, &placements);
+            #[cfg(not(target_env = "ohos"))]
             let result = capture(wayland, scale, &stop, &placements);
             let _ = tx.send(result);
             wake.request_repaint();
@@ -47,7 +56,7 @@ fn find_monitor(placements: &[Placement], x: i32, y: i32, w: u32, h: u32) -> Opt
 fn count(width: usize, height: usize) -> Result<usize, String> {
     width.checked_mul(height).filter(|&n| n > 0 && n <= MAX_PIXELS).ok_or_else(|| "Screen capture exceeds the 64 MP memory budget".into())
 }
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 fn capture(wayland: bool, scale: f32, stop: &std::sync::atomic::AtomicBool, placements: &[Placement]) -> Result<Capture, String> {
     if wayland {
         return portal(stop);
@@ -125,7 +134,7 @@ fn capture(wayland: bool, scale: f32, stop: &std::sync::atomic::AtomicBool, plac
     }
     Ok(Capture::Images(images))
 }
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 fn portal(stop: &std::sync::atomic::AtomicBool) -> Result<Capture, String> {
     use std::collections::HashMap;
     use zbus::{
@@ -357,7 +366,7 @@ mod tests {
         assert!(unpack_rgba(&[0; 3], 1, 1, 4, [0, 1, 2, 3], false, true).is_err());
         assert!(unpack_rgba(&[0; 4], 1, 1, 4, [4, 1, 2, 3], false, true).is_err());
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
     #[test]
     #[ignore = "requires a live X11 display; draws only a tiny synthetic fixture"]
     fn screen_capture_reads_a_known_x11_fixture_pixel() {
@@ -407,7 +416,61 @@ mod tests {
         assert_eq!(find_monitor(&m, 0, 0, 1920, 1080), None);
     }
 }
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[cfg(target_env = "ohos")]
+fn capture_ohos(primary_window_id: Option<i32>, scale: f32, stop: &std::sync::atomic::AtomicBool, placements: &[Placement]) -> Result<Capture, String> {
+    let mut window_ids = Vec::new();
+    if let Some(id) = primary_window_id.filter(|&id| id > 0) {
+        window_ids.push(id);
+    }
+    if let Ok(infos) = openharmony_ability::window_manager::WindowManager::main_windows() {
+        for info in infos {
+            if info.showing && info.window_id > 0 && !window_ids.contains(&info.window_id) {
+                window_ids.push(info.window_id);
+            }
+        }
+    }
+    if window_ids.is_empty() {
+        return Err("No active OpenHarmony window is available for color picking".into());
+    }
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let mut total = 0usize;
+    let mut images = Vec::new();
+    let mut last_error = None;
+    for id in window_ids.into_iter().take(16) {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(Capture::Color(None));
+        }
+        match openharmony_ability::snapshot_window(id) {
+            Ok(snap) => {
+                let (width, height) = (snap.width as usize, snap.height as usize);
+                total =
+                    total.checked_add(count(width, height)?).filter(|&n| n <= MAX_PIXELS).ok_or("Combined windows exceed the screen picker memory budget")?;
+                let w_px = if snap.window_width > 0 { snap.window_width } else { snap.width };
+                let h_px = if snap.window_height > 0 { snap.window_height } else { snap.height };
+                let monitor = find_monitor(placements, snap.window_x, snap.window_y, w_px, h_px).or_else(|| placements.first().map(|p| p.index));
+                let profile = crate::monitor_profile::profile_for_display(snap.display_id);
+                images.push(ScreenImage {
+                    monitor,
+                    position: egui::pos2(snap.window_x as f32, snap.window_y as f32) / scale,
+                    size: egui::vec2(w_px as f32, h_px as f32) / scale,
+                    width,
+                    height,
+                    rgba: snap.rgba,
+                    profile,
+                });
+            }
+            Err(err) => {
+                last_error = Some(err.to_string());
+            }
+        }
+    }
+    if images.is_empty() {
+        return Err(last_error.unwrap_or_else(|| "OpenHarmony window snapshot failed".into()));
+    }
+    Ok(Capture::Images(images))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_env = "ohos")))]
 fn capture(_wayland: bool, _scale: f32, _stop: &std::sync::atomic::AtomicBool, _placements: &[Placement]) -> Result<Capture, String> {
     Err("Screen color picking is unavailable on this platform".into())
 }

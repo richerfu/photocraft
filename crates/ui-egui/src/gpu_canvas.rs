@@ -753,9 +753,17 @@ pub fn use_adapter_limits_with(setup: &mut egui_wgpu::WgpuSetup, on_adapter: imp
 
 /// egui's base limits (WebGL2's on GL) with the adapter's maximum texture and buffer sizes.
 pub fn device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
-    let base = if adapter.get_info().backend == wgpu::Backend::Gl { wgpu::Limits::downlevel_webgl2_defaults() } else { wgpu::Limits::default() };
-    let a = adapter.limits();
-    wgpu::Limits { max_texture_dimension_2d: a.max_texture_dimension_2d, max_buffer_size: a.max_buffer_size, ..base }
+    #[cfg(target_env = "ohos")]
+    {
+        // OHOS GLES drivers can expose fewer inter-stage variables than WebGL2's baseline.
+        adapter.limits()
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        let base = if adapter.get_info().backend == wgpu::Backend::Gl { wgpu::Limits::downlevel_webgl2_defaults() } else { wgpu::Limits::default() };
+        let a = adapter.limits();
+        wgpu::Limits { max_texture_dimension_2d: a.max_texture_dimension_2d, max_buffer_size: a.max_buffer_size, ..base }
+    }
 }
 
 /// Milliseconds since first call (monotonic). Always 0 on wasm, where `std::time` is unavailable.

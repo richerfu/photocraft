@@ -410,7 +410,7 @@ impl Sentinel {
 
 /// The Linux display-server preference (`performance.linuxDisplayServer`) from the preferences
 /// file, read before the window opens; `Auto` when the file or value is missing or unknown.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(all(target_os = "linux", not(target_env = "ohos")), test))]
 pub fn read_display_server(path: Option<&Path>) -> photocraft_engine::prefs::LinuxDisplayServer {
     let v: Value = path.and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
     v.get("performance")
