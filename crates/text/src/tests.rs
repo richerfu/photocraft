@@ -1029,3 +1029,24 @@ fn word_and_line_navigation() {
     assert_eq!(jumped, char_index(text, l.lines[1].range.end), "own column");
     assert!(jumped > kept);
 }
+
+#[test]
+#[ignore = "requires PHOTOCRAFT_COLOR_EMOJI_FONT pointing to a locally installed bitmap font"]
+fn installed_bitmap_emoji_renders_colour_at_all_depths_and_transforms() {
+    let path = std::env::var_os("PHOTOCRAFT_COLOR_EMOJI_FONT").expect("set local font path");
+    let mut engine = TextEngine::new();
+    let families = engine.fonts.register_font_data(std::fs::read(path).unwrap());
+    let family = families.first().expect("font must contain a family");
+    assert!(engine.fonts.fallback_stack().any(|name| name == family), "installed emoji must join the automatic fallback stack");
+    let layer = TextLayer { text: "😀🌈".into(), font_family: "Inter".into(), size_pt: 64.0, ..Default::default() };
+    let layout = engine.layout(&layer, 72.0);
+    assert!(layout.glyphs.iter().all(|g| g.id != 0));
+    for transform in [Affine::IDENTITY, Affine { m: [1.2, 0.3, -0.1, 0.8, 50.0, 90.0] }] {
+        for format in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA32F] {
+            let rendered = crate::render::rasterize(&layout, &transform, format, Default::default());
+            assert!(rendered.rect.width() > 40 && rendered.rect.height() > 30, "{:?}", rendered.rect);
+            let pixels = rendered.surface.read_region(rendered.rect);
+            assert!(pixels.chunks_exact(4).filter(|p| p[3] > 0.5 && (p[0] - p[2]).abs() > 0.2).count() > 100, "missing colour in {format:?}");
+        }
+    }
+}

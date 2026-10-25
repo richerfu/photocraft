@@ -100,3 +100,15 @@ opt-level = 3
 opt-level = 3
 [profile.wasm-release.package.photocraft-paint]
 opt-level = 3
+
+# Local adapted winit (0.30.13 feat-openharmony) and egui (0.36.2 feat-openharmony).
+[patch.crates-io]
+winit = { path = "../winit" }
+dpi = { path = "../winit/dpi" }
+glutin = { path = "../glutin/glutin" }
+glutin-winit = { path = "../glutin/glutin-winit" }
+egui = { path = "../egui/crates/egui" }
+eframe = { path = "../egui/crates/eframe" }
+egui-winit = { path = "../egui/crates/egui-winit" }
+egui-wgpu = { path = "../egui/crates/egui-wgpu" }
+egui_glow = { path = "../egui/crates/egui_glow" }

@@ -7,7 +7,11 @@ default-run = "photocraft"
 description = "Photocraft: an open-source, native image editor"
 build = "build.rs"
 
+[lib]
+crate-type = ["rlib"]
+
 [features]
+ohos-control = []
 # Open HEIC/HEIF photos (the optional photocraft-heif crate). Not default so distributors choose
 # it; official builds (CI, packaging/, release) build with `--features heif`.
 heif = ["photocraft-codecs/heif"]
@@ -28,13 +32,13 @@ photocraft-format = { workspace = true }
 photocraft-automation = { workspace = true }
 photocraft-ui-egui = { workspace = true }
 # Pen tablet pressure/tilt on macOS and X11 (the workspace's one isolated unsafe helper crate).
-photocraft-tablet = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "persistence"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_env = "ohos")))'.dependencies]
+photocraft-tablet = { workspace = true }
 rfd = { workspace = true }
 arboard = { version = "3.6", features = ["wayland-data-control"] }
 open = "5"
@@ -62,7 +66,7 @@ muda = { version = "=0.21.1", default-features = false }
 dispatch2 = { version = "=0.3.1", default-features = false, features = ["std"] }
 
 # Drop position on X11 (`cursor.rs`): pure-Rust X client, already in Cargo.lock; pinned exactly.
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_env = "ohos")))'.dependencies]
 x11rb = { version = "=0.13.2", default-features = false, features = ["image", "randr"] }
 # Wayland desktop color selection through the existing XDG portal transport.
 zbus = "=5.19.0"
@@ -92,3 +96,8 @@ harness = false
 [build-dependencies]
 # Icon + VERSIONINFO for photocraft.exe; build.rs only uses it when targeting Windows.
 winresource = "0.1"
+
+[target.'cfg(target_env = "ohos")'.dependencies]
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "extended-plugins"] }
+ohos-hilog-binding = { version = "0.2.3", features = ["log"] }
+openharmony-ability = { git = "https://github.com/harmony-contrib/openharmony-ability.git", rev = "385ce749121b56ea33226f8542e3f39afd6e5ed6" }

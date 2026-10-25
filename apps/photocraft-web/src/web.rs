@@ -178,6 +178,7 @@ fn services(inbox: Inbox) -> Services {
             photocraft_io::export(doc, path, &opts).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string())
         })),
         file_dialog: Some(Box::new(|request, _parent, reply| match request {
+            FileDialogRequest::AuthorizeSave { path } => reply.send(Some(FileDialogAnswer::SaveTo(path))),
             // The browser's file picker hands over the file's contents, not a path.
             FileDialogRequest::Open { .. } => wasm_bindgen_futures::spawn_local(async move {
                 let picked = rfd::AsyncFileDialog::new().add_filter("All Formats", OPEN_EXTS).pick_file().await;

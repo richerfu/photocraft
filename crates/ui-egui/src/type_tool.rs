@@ -457,6 +457,32 @@ pub fn handle_keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
             egui::Event::Ime(egui::ImeEvent::Preedit { text: s, .. } | egui::ImeEvent::Commit(s)) if s == "\n" || s == "\r" => handled[k] = false,
             egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => ime_update(app, text, false),
             egui::Event::Ime(egui::ImeEvent::Commit(s)) => ime_update(app, s, true),
+            #[cfg(target_env = "ohos")]
+            egui::Event::Ime(egui::ImeEvent::Selection { start, end }) => {
+                if let Some(edit) = app.ui.text_edit.as_mut() {
+                    edit.anchor = utf16_char_index(&text, *start);
+                    edit.caret = utf16_char_index(&text, *end);
+                    edit.preedit = None;
+                }
+            }
+            #[cfg(target_env = "ohos")]
+            egui::Event::Ime(egui::ImeEvent::DeleteSurroundingUtf16 { before, after }) => {
+                let (start, end) = utf16_delete_range(&text, a, b, *before, *after);
+                if let Some(edit) = app.ui.text_edit.as_mut() {
+                    edit.anchor = start;
+                    edit.caret = end;
+                    edit.preedit = None;
+                }
+                insert(app, "");
+            }
+            egui::Event::Ime(egui::ImeEvent::DeleteSurrounding { before_chars, after_chars }) => {
+                if let Some(edit) = app.ui.text_edit.as_mut() {
+                    edit.anchor = a.saturating_sub(*before_chars);
+                    edit.caret = b.saturating_add(*after_chars).min(n);
+                    edit.preedit = None;
+                }
+                insert(app, "");
+            }
             egui::Event::Ime(_) => {}
             egui::Event::Copy | egui::Event::Cut => {
                 if a < b {
@@ -603,7 +629,18 @@ pub fn draw_overlay(app: &mut PhotocraftApp, painter: &egui::Painter, xf: &ViewX
         let (x, top, bot) = if l.lines.is_empty() { (0.0, -(12.0 * l.px_per_pt.max(1.0)), 3.0) } else { (x, top, bot) };
         let r = egui::Rect::from_two_pos(scr(x, top), scr(x, bot)).expand(1.0);
         painter.ctx().output_mut(|o| {
-            o.ime = Some(egui::output::IMEOutput { purpose: egui::IMEPurpose::Normal, rect: r, cursor_rect: r, should_interrupt_composition: false });
+            o.ime = Some(egui::output::IMEOutput {
+                purpose: egui::IMEPurpose::Normal,
+                rect: r,
+                cursor_rect: r,
+                should_interrupt_composition: false,
+                #[cfg(target_env = "ohos")]
+                surrounding_text: ed.preedit.is_none().then(|| egui::output::IMETextState {
+                    text: text.clone(),
+                    cursor: byte_of(&text, ed.caret),
+                    anchor: byte_of(&text, ed.anchor),
+                }),
+            });
         });
     }
     // Frame: paragraph text shows its box with handles; point text an underline per line.
@@ -1570,5 +1607,52 @@ mod tests {
         assert_eq!(word_boundary("hello big world", 0, true), 5);
         assert_eq!(word_boundary("hello big world", 7, false), 6);
         assert_eq!(word_boundary("hello big world", 15, false), 10);
+    }
+}
+
+// Native IME offsets are UTF-16; the Type tool and engine use Unicode characters.
+#[cfg(any(target_env = "ohos", test))]
+fn utf16_char_index(text: &str, offset: usize) -> usize {
+    let mut units = 0;
+    text.chars()
+        .take_while(|ch| {
+            units += ch.len_utf16();
+            units <= offset
+        })
+        .count()
+}
+
+#[cfg(any(target_env = "ohos", test))]
+fn utf16_delete_range(text: &str, start: usize, end: usize, before: usize, after: usize) -> (usize, usize) {
+    let chars: Vec<_> = text.chars().collect();
+    let (mut start, mut end) = (start.min(chars.len()), end.min(chars.len()));
+    if start == end {
+        let mut units = 0;
+        while start > 0 && units < before {
+            start -= 1;
+            units += chars[start].len_utf16();
+        }
+        units = 0;
+        while end < chars.len() && units < after {
+            units += chars[end].len_utf16();
+            end += 1;
+        }
+    }
+    (start, end)
+}
+
+#[cfg(test)]
+mod ohos_ime_tests {
+    use super::*;
+
+    #[test]
+    fn native_utf16_offsets_keep_surrogate_pairs_whole() {
+        let text = "A😀中文B";
+        assert_eq!(utf16_char_index(text, 2), 1);
+        assert_eq!(utf16_char_index(text, 3), 2);
+        assert_eq!(utf16_delete_range(text, 2, 2, 1, 0), (1, 2));
+        assert_eq!(utf16_delete_range(text, 1, 1, 0, 1), (1, 2));
+        assert_eq!(utf16_delete_range(text, 2, 4, 99, 99), (2, 4));
+        assert_eq!(utf16_delete_range(text, 2, 2, 99, 99), (0, 5));
     }
 }

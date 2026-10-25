@@ -28,6 +28,8 @@ pub enum FileDialogRequest {
     Open { multiple: bool },
     /// Where to write, starting from `suggested` (a file name, or the document's own path).
     Save { suggested: String },
+    /// Grant access needed to safely replace an existing file without choosing a new name.
+    AuthorizeSave { path: String },
 }
 
 /// The user's choice (a cancelled dialog answers `None`).
@@ -44,14 +46,20 @@ pub enum FileDialogAnswer {
 /// Hands a dialog's answer to the app and wakes it, from any thread. Dropping it unanswered
 /// (a dialog that failed to show) counts as Cancel.
 pub struct FileDialogReply {
-    tx: Sender<Option<FileDialogAnswer>>,
+    tx: Sender<Result<Option<FileDialogAnswer>, String>>,
     ctx: egui::Context,
 }
 
 impl FileDialogReply {
+    /// Surface a platform or permission failure separately from user cancellation.
+    pub fn send_error(self, error: impl Into<String>) {
+        let _ = self.tx.send(Err(error.into()));
+        self.ctx.request_repaint();
+    }
+
     pub fn send(self, answer: Option<FileDialogAnswer>) {
         // Nothing is waiting any more when the app has quit meanwhile.
-        let _ = self.tx.send(answer);
+        let _ = self.tx.send(Ok(answer));
         self.ctx.request_repaint();
     }
 }
@@ -61,13 +69,13 @@ impl FileDialogReply {
 pub type FileDialogFn = Box<dyn FnMut(FileDialogRequest, Option<&eframe::Frame>, FileDialogReply)>;
 
 /// What to do with the answer (`None`: cancelled).
-type Then = Box<dyn FnOnce(&mut PhotocraftApp, Option<FileDialogAnswer>) -> Result<Value, String>>;
+type Then = Box<dyn FnOnce(&mut PhotocraftApp, Result<Option<FileDialogAnswer>, String>) -> Result<Value, String>>;
 
 /// The file dialog in progress.
 pub(crate) struct Pending {
     /// Not shown yet: it is shown at the end of the frame, which has the window to parent it to.
     request: Option<FileDialogRequest>,
-    answer: Option<Receiver<Option<FileDialogAnswer>>>,
+    answer: Option<Receiver<Result<Option<FileDialogAnswer>, String>>>,
     then: Then,
 }
 
@@ -97,9 +105,9 @@ impl PhotocraftApp {
         }
         let kind = match request {
             FileDialogRequest::Open { .. } => "open",
-            FileDialogRequest::Save { .. } => "save",
+            FileDialogRequest::Save { .. } | FileDialogRequest::AuthorizeSave { .. } => "save",
         };
-        let then: Then = Box::new(move |app, answer| answer.map_or_else(|| Err(CANCELLED.into()), |a| then(app, a)));
+        let then: Then = Box::new(move |app, answer| answer?.map_or_else(|| Err(CANCELLED.into()), |a| then(app, a)));
         self.file_dialog = Some(Pending { request: Some(request), answer: None, then });
         Ok(json!({ "fileDialog": kind }))
     }
@@ -180,7 +188,7 @@ impl PhotocraftApp {
             Some(Err(TryRecvError::Empty)) => return,
             Some(Ok(answer)) => answer,
             // The reply was dropped unanswered: the dialog couldn't be shown.
-            Some(Err(TryRecvError::Disconnected)) | None => None,
+            Some(Err(TryRecvError::Disconnected)) | None => Ok(None),
         };
         let Some(Pending { then, .. }) = self.file_dialog.take() else { return };
         if let Err(e) = then(self, answer)

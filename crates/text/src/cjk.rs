@@ -68,7 +68,7 @@ pub fn script_order(locale: Option<&str>) -> [CjkScript; 4] {
         "zh" | "yue" => {
             let hant = rest.iter().any(|p| matches!(*p, "hant" | "tw" | "hk" | "mo"));
             let hans = rest.iter().any(|p| matches!(*p, "hans" | "cn" | "sg"));
-            if hant && !hans || lang == "yue" && !hans {
+            if (hant || lang == "yue") && !hans {
                 [TraditionalChinese, SimplifiedChinese, Japanese, Korean]
             } else {
                 [SimplifiedChinese, TraditionalChinese, Japanese, Korean]
@@ -229,7 +229,9 @@ pub struct FontFile {
 pub fn font_files(script: CjkScript) -> Vec<FontFile> {
     use CjkScript::*;
     let f = |p: &str, family: &'static str| FontFile { path: p.into(), family };
-    if cfg!(target_os = "macos") {
+    if cfg!(target_env = "ohos") {
+        vec![f("/system/fonts/HarmonyOS_Sans_SC.ttf", ""), f("/system/fonts/NotoSansCJK-Regular.ttc", "")]
+    } else if cfg!(target_os = "macos") {
         let pingfang = |family| mac_pingfang().map(|path| FontFile { path, family });
         match script {
             Japanese => vec![f("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", ""), f("/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc", "")],

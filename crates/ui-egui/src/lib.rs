@@ -201,6 +201,7 @@ pub type EncodePngFn = Box<dyn Fn(u32, u32, &[u8]) -> Result<Vec<u8>, String>>;
 /// Put an RGBA8 image (width, height, pixels) on the OS clipboard.
 pub type ClipboardSetFn = Box<dyn FnMut(u32, u32, &[u8]) -> Result<(), String>>;
 /// Read an RGBA8 image from the OS clipboard.
+pub mod clipboard_async;
 pub type ClipboardGetFn = Box<dyn FnMut() -> Option<(u32, u32, Vec<u8>)>>;
 /// Shared queue of (file name, bytes) delivered asynchronously.
 pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
@@ -235,6 +236,9 @@ pub type AppendTextFn = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
 pub type OsEventsFn = Box<dyn FnMut() -> Vec<OsEvent>>;
 /// Ends the app the platform's own way (see [`Services::quit`]).
 pub type QuitFn = Box<dyn FnMut()>;
+/// Test whether saving a path needs an interactive platform grant.
+pub type SaveAuthorizationFn = Box<dyn Fn(&str) -> bool>;
+
 /// Where the OS pointer is now, in egui points within the window; `None` when unknown.
 pub type CursorPosFn = Box<dyn FnMut(&egui::Context) -> Option<egui::Pos2>>;
 
@@ -250,6 +254,8 @@ pub struct Services {
     pub export: Option<ExportFn>,
     /// Show an Open or Save dialog without waiting for it (see `file_dialog`).
     pub file_dialog: Option<FileDialogFn>,
+    /// Whether a native save must first ask for directory access (sandboxed platforms).
+    pub save_needs_authorization: Option<SaveAuthorizationFn>,
     /// Write bytes to a path (native) or trigger a download (web).
     pub write: Option<WriteFn>,
     /// File access used only by control/MCP requests. Interactive dialogs keep
@@ -270,6 +276,8 @@ pub struct Services {
     /// OS clipboard images: copies go out, screenshots and images from other apps come in.
     pub clipboard_set_image: Option<ClipboardSetFn>,
     pub clipboard_get_image: Option<ClipboardGetFn>,
+    /// Asynchronous OS image reads (for platforms with a system permission dialog).
+    pub clipboard_read_async: Option<clipboard_async::Read>,
     /// Preferences persistence: the platform config directory on native, browser storage on
     /// the web (see `prefs_ui`).
     pub load_prefs: Option<LoadTextFn>,
@@ -446,6 +454,7 @@ pub struct PhotocraftApp {
     /// The OS clipboard was already read for the paste in flight (Edit › Paste positions it first),
     /// so `run` doesn't read it a second time.
     pub(crate) clip_read_for_paste: bool,
+    pending_clipboard: Option<clipboard_async::Pending>,
     /// Pointer position over the canvas (document px), for the Info panel and status bar.
     pub(crate) hover_doc: Option<[f64; 2]>,
     pub(crate) clone_preview: Option<crate::canvas::ClonePreviewCache>,
@@ -559,6 +568,7 @@ impl PhotocraftApp {
             os_clip_sig: None,
             clip_external: false,
             clip_read_for_paste: false,
+            pending_clipboard: None,
             transform_preview: None,
             move_mods: Default::default(),
             style_preview: None,
@@ -671,6 +681,11 @@ impl PhotocraftApp {
         }
         if let Some(r) = transform_tool::intercept(self, id) {
             return r;
+        }
+        if matches!(id, "edit.paste" | "edit.pasteSpecial.pasteInPlace" | "file.newFromClipboard")
+            && let Some(result) = clipboard_async::begin(self, id, &params)
+        {
+            return result;
         }
         let suppress_events = self.automation_input && self.session.prefs().script_events.enabled;
         if suppress_events {
@@ -894,6 +909,17 @@ impl PhotocraftApp {
             return Ok(serde_json::json!({"path": "smart object", "warnings": []}));
         }
         if let Some(path) = path {
+            if self.services.save_needs_authorization.as_ref().is_some_and(|needs| needs(&path)) {
+                let doc = self.active_doc_id()?;
+                self.ui.status = format!("Select the containing folder to allow safe saves: {path}");
+                return self.ask_file(FileDialogRequest::AuthorizeSave { path: path.clone() }, move |app, answer| {
+                    if answer != FileDialogAnswer::SaveTo(path.clone()) {
+                        return Err("save authorization returned a different file".into());
+                    }
+                    app.refocus(doc)?;
+                    app.save_to(path)
+                });
+            }
             return self.save_to(path);
         }
         let st = self.session.active().ok_or("no document")?;
@@ -1063,6 +1089,7 @@ impl eframe::App for PhotocraftApp {
         if self.live_tokens.poll(ctx, self.ui.theme) {
             self.checker = None;
         }
+        clipboard_async::poll(self, ctx);
         self.drain_control(ctx);
         native_menu::run(self, ctx);
         if self.ui.text_edit.is_some() && !self.ui.tool.is_type() {
@@ -1561,6 +1588,10 @@ impl PhotocraftApp {
     pub(crate) fn import_os_clipboard(&mut self) -> bool {
         let Some(get) = self.services.clipboard_get_image.as_mut() else { return false };
         let Some((w, h, bytes)) = get() else { return false };
+        self.import_clipboard_image((w, h, bytes))
+    }
+
+    fn import_clipboard_image(&mut self, (w, h, bytes): clipboard_async::Image) -> bool {
         if w == 0 || h == 0 || bytes.len() != w as usize * h as usize * 4 {
             return false;
         }

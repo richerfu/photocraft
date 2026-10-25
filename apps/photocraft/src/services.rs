@@ -5,17 +5,21 @@ use photocraft_color::{ColorMode, SampleType};
 use photocraft_doc::{Document, Layer, Size};
 use photocraft_format::RecoveryStore;
 use photocraft_geom::Rect;
-use photocraft_ui_egui::{FileDialogAnswer, FileDialogReply, FileDialogRequest, Recovered, Services};
+#[cfg(not(target_env = "ohos"))]
+use photocraft_ui_egui::{FileDialogAnswer, FileDialogReply, FileDialogRequest};
+use photocraft_ui_egui::{Recovered, Services};
 use std::cell::RefCell;
+#[cfg(not(target_env = "ohos"))]
 use std::future::Future;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_env = "ohos"))]
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
 /// Everything File › Open reads: PhotoCraft, Photoshop and Affinity documents, flat images, and
 /// Photoshop brushes (.abr), gradients (.grd) and swatches (.aco, .ase), which go to the preset libraries.
-const OPEN_EXTS: &[&str] = &[
+pub(super) const OPEN_EXTS: &[&str] = &[
     "pcraft", "psd", "psb", "psdt", "png", "jpg", "jpeg", "tif", "tiff", "webp", "gif", "bmp", "tga", "ico", "qoi", "exr", "hdr", "pbm", "pgm", "ppm", "pam",
     "pfm", "heic", "heif", "hif", "dng", "cr2", "cr3", "nef", "nrw", "arw", "pef", "orf", "rw2", "raf", "abr", "grd", "svg", "svgz", "aco", "ase", "af",
     "afdesign", "afphoto", "afpub",
@@ -25,6 +29,7 @@ const OPEN_EXTS: &[&str] = &[
 /// On Linux and the BSDs rfd turns each extension into a case-sensitive `*.ext` glob for the XDG
 /// portal or zenity, so every letter becomes a character class, as the portal spec suggests
 /// (`*.[iI][cC][oO]`). Windows and macOS take literal extensions and ignore case already.
+#[cfg(not(target_env = "ohos"))]
 fn open_filter_extensions(extensions: &[&str]) -> Vec<String> {
     let case_sensitive_globs = cfg!(all(unix, not(target_os = "macos")));
     let class = |c: char| if c.is_ascii_alphabetic() { format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase()) } else { c.to_string() };
@@ -50,7 +55,7 @@ const SAVE_FILTERS: &[(&str, &[&str])] = &[
 const OTHER_SAVE_FILTERS: &[(&str, &[&str])] = &[("Color Swatches", &["aco"]), ("Swatch Exchange", &["ase"])];
 
 /// Lists the save dialog's file types with the `suggested` type first (added if unlisted), so the dialog keeps that extension instead of .psd.
-fn save_filters(suggested: &str) -> Vec<(String, Vec<String>)> {
+pub(super) fn save_filters(suggested: &str) -> Vec<(String, Vec<String>)> {
     let ext = Path::new(suggested).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
     if let Some((name, exts)) = OTHER_SAVE_FILTERS.iter().find(|(_, exts)| exts.contains(&ext.as_str())) {
         return vec![(name.to_string(), exts.iter().map(|e| e.to_string()).collect())];
@@ -70,12 +75,14 @@ fn save_filters(suggested: &str) -> Vec<(String, Vec<String>)> {
 /// Shows an Open or Save dialog without blocking the event loop (#673, #574): rfd's async dialog
 /// is created here, on the main thread, with the window as its parent (a sheet on macOS, an owned
 /// modal window elsewhere), and a helper thread waits for it and hands the answer to the app.
+#[cfg(not(target_env = "ohos"))]
 fn show_file_dialog(request: FileDialogRequest, parent: Option<&eframe::Frame>, reply: FileDialogReply) {
     let mut dialog = rfd::AsyncFileDialog::new();
     if let Some(parent) = parent {
         dialog = dialog.set_parent(parent);
     }
     let answer: Pin<Box<dyn Future<Output = Option<FileDialogAnswer>> + Send>> = match request {
+        FileDialogRequest::AuthorizeSave { path } => Box::pin(async move { Some(FileDialogAnswer::SaveTo(path)) }),
         FileDialogRequest::Open { multiple } => {
             let dialog = dialog.add_filter("All Formats", &open_filter_extensions(OPEN_EXTS)).add_filter("PhotoCraft", &open_filter_extensions(&["pcraft"]));
             if multiple {
@@ -103,11 +110,13 @@ fn show_file_dialog(request: FileDialogRequest, parent: Option<&eframe::Frame>, 
     }
 }
 
+#[cfg(not(target_env = "ohos"))]
 fn path_of(file: &rfd::FileHandle) -> String {
     file.path().to_string_lossy().into_owned()
 }
 
 /// Runs `future` to completion on this thread, sleeping until it is woken.
+#[cfg(not(target_env = "ohos"))]
 fn block_on<T>(future: impl Future<Output = T>) -> T {
     struct Unpark(std::thread::Thread);
     impl std::task::Wake for Unpark {
@@ -192,6 +201,7 @@ fn recovery_services(dir: Option<PathBuf>) -> Services {
 /// The pixels to paste when the clipboard holds copied files rather than an image (Copy in
 /// Files, Finder or Explorer puts paths on the clipboard, #338): the first file that decodes,
 /// upright, as RGBA8. Files that aren't images are skipped after reading only their header.
+#[cfg(not(target_env = "ohos"))]
 fn image_from_files(paths: &[PathBuf]) -> Option<(u32, u32, Vec<u8>)> {
     use std::io::Read;
     paths.iter().find_map(|path| {
@@ -217,6 +227,7 @@ fn image_from_files(paths: &[PathBuf]) -> Option<(u32, u32, Vec<u8>)> {
 /// one, an AppImage relaunches by its own path, and anything else is `photocraft` on the PATH.
 /// `None` outside Flatpak when there is no X server (`DISPLAY` unset) to run on.
 #[cfg(any(target_os = "linux", test))]
+#[cfg(not(target_env = "ohos"))]
 pub fn xwayland_command(flatpak_id: Option<&str>, appimage: Option<&str>, x_display: bool) -> Option<String> {
     if let Some(id) = flatpak_id.filter(|id| !id.is_empty()) {
         return Some(format!("flatpak run --nosocket=wayland --socket=x11 {}", shell_word(id)));
@@ -227,11 +238,13 @@ pub fn xwayland_command(flatpak_id: Option<&str>, appimage: Option<&str>, x_disp
 
 /// `s` as one POSIX shell word: bare when every character is safe there, else single-quoted.
 #[cfg(any(target_os = "linux", test))]
+#[cfg(not(target_env = "ohos"))]
 fn shell_word(s: &str) -> String {
     if s.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-+:,@".contains(&b)) { s.to_string() } else { format!("'{}'", s.replace('\'', r"'\''")) }
 }
 
 pub fn native(automation: Option<photocraft_automation::AuthorizedWorkspace>) -> Services {
+    #[cfg(not(target_env = "ohos"))]
     let clip: Rc<RefCell<Option<arboard::Clipboard>>> = Rc::default();
     let automation_read = automation.clone().map(|workspace| {
         Box::new(move |path: &str| {
@@ -267,7 +280,10 @@ pub fn native(automation: Option<photocraft_automation::AuthorizedWorkspace>) ->
             opts.xmp = if settings.xmp_all { photocraft_io::XmpEmbed::All } else { photocraft_io::XmpEmbed::None };
             crate::crash_guard::guard("Export", || photocraft_io::export(doc, path, &opts).map(|r| (r.bytes, r.warnings)).map_err(|e| e.to_string()))
         })),
+        #[cfg(not(target_env = "ohos"))]
         file_dialog: Some(Box::new(show_file_dialog)),
+        #[cfg(target_env = "ohos")]
+        file_dialog: None,
         write: Some(Box::new(|path: &str, bytes: &[u8]| write_atomic(Path::new(path), bytes))),
         automation_read,
         automation_write,
@@ -278,7 +294,13 @@ pub fn native(automation: Option<photocraft_automation::AuthorizedWorkspace>) ->
             photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &EncodeOptions::default()).map_err(|e| e.to_string())
         })),
         inbox: None,
+        #[cfg(not(target_env = "ohos"))]
         open_url: Some(Box::new(|url: &str| open::that(url).map_err(|e| e.to_string()))),
+        #[cfg(target_env = "ohos")]
+        open_url: None,
+        #[cfg(target_env = "ohos")]
+        clipboard_set_image: None,
+        #[cfg(not(target_env = "ohos"))]
         clipboard_set_image: Some({
             let clip = clip.clone();
             Box::new(move |w: u32, h: u32, px: &[u8]| {
@@ -290,6 +312,9 @@ pub fn native(automation: Option<photocraft_automation::AuthorizedWorkspace>) ->
                 cb.set_image(arboard::ImageData { width: w as usize, height: h as usize, bytes: std::borrow::Cow::Borrowed(px) }).map_err(|e| e.to_string())
             })
         }),
+        #[cfg(target_env = "ohos")]
+        clipboard_get_image: None,
+        #[cfg(not(target_env = "ohos"))]
         clipboard_get_image: Some({
             let clip = clip.clone();
             Box::new(move || {
@@ -527,6 +552,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_env = "ohos"))]
     fn block_on_waits_for_a_wake_from_another_thread() {
         let (tx, rx) = std::sync::mpsc::channel::<std::task::Waker>();
         let mut woken = false;

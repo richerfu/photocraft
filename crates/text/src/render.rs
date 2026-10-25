@@ -108,7 +108,7 @@ fn draw(layout: &TextLayout, transform: &Xform, sink: &mut impl LineSink, only_c
 
 /// Font units (scaled to px, y up) → text space for a placed glyph: scales, faux italic,
 /// baseline shift, and the vertical-type orientation.
-fn glyph_xform(layout: &TextLayout, g: &PlacedGlyph, face_skew_deg: f32) -> Xform {
+pub(crate) fn glyph_xform(layout: &TextLayout, g: &PlacedGlyph, face_skew_deg: f32) -> Xform {
     let Some(st) = layout.styles.get(g.style as usize) else { return Xform([1.0, 0.0, 0.0, -1.0, g.x as f64, g.y as f64]) };
     let hs = if st.horizontal_scale > 0.0 { st.horizontal_scale } else { 1.0 } as f64;
     let vs = if st.vertical_scale > 0.0 { st.vertical_scale } else { 1.0 } as f64;
@@ -131,7 +131,7 @@ pub fn layout_warp(layout: &TextLayout, warp: Option<&photocraft_doc::text::Text
 }
 
 /// Colour components in `format`'s model (without alpha).
-fn color_in(format: &PixelFormat, c: &Color) -> Vec<f32> {
+pub(crate) fn color_in(format: &PixelFormat, c: &Color) -> Vec<f32> {
     let n = format.mode.color_channels();
     if c.mode == format.mode {
         c.c[..n].to_vec()
@@ -168,6 +168,7 @@ fn rect_from_bounds([x0, y0, x1, y1]: [f64; 4]) -> Rect {
 pub fn ink_rect_warped(layout: &TextLayout, transform: &Affine, warp: Option<&Warp>) -> Rect {
     let mut b = Bounds::default();
     draw(layout, &Xform(transform.m), &mut b, None, warp);
+    crate::bitmap::bounds(layout, transform, warp, &mut b);
     b.rect.map(rect_from_bounds).unwrap_or(Rect::EMPTY)
 }
 
@@ -217,6 +218,7 @@ pub fn rasterize_warped(layout: &TextLayout, transform: &Affine, format: PixelFo
             px[n] = s + px[n] * keep;
         }
     }
+    crate::bitmap::composite(layout, &xf, warp, &format, w, h, &mut acc);
     // Unpremultiply.
     for px in acc.chunks_exact_mut(stride) {
         let a = px[n];
